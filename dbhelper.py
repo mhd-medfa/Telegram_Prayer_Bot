@@ -1,7 +1,14 @@
 import os
-import psycopg2
 from typing import List
 from dataclasses import dataclass
+
+import firebase_admin
+from firebase_admin import firestore
+from firebase_admin import credentials
+from firebase_admin import db
+
+from config import settings
+
 
 @dataclass
 class User:
@@ -10,78 +17,25 @@ class User:
 
 
 class DBHelper:
-    def __init__(self, db_url: str=None):
-        if db_url is None:
-            db_url = os.environ['DATABASE_URL']
-        self.conn = psycopg2.connect(db_url)
-        self.setup()
-
-    def setup(self):
-        cur = self.conn.cursor()
-        stmt = """
-            CREATE TABLE IF NOT EXISTS Users (
-                id INTEGER PRIMARY KEY,
-                active BOOLEAN NOT NULL
-            );
-        """
-        cur.execute(stmt)
-        self.conn.commit()
-        cur.close()
+    def __init__(self):
+        cred = credentials.Certificate(settings.CREDENTIALS_FILE)
+        app = firebase_admin.initialize_app(cred, {'databaseURL': settings.DATABASE_URL})
+        db = firestore.client(app)
+        self.collection = db.collection("users")
 
     def add_user(self, user_id: str):
-        cur = self.conn.cursor()
-        stmt = """
-            INSERT INTO Users (id, active)
-                VALUES (%s, TRUE)
-                ON CONFLICT (id) DO
-                    UPDATE SET active = TRUE;
-        """
-        args = (user_id, )
-        cur.execute(stmt, args)
-        self.conn.commit()
-        cur.close()
+        self.collection.add({'active': True}, document_id=str(user_id))
 
     def get_user(self, user_id: str) -> User:
-        cur = self.conn.cursor()
-        stmt = """
-            SELECT id, active FROM Users
-            WHERE id = %s;
-        """
-        args = (user_id,)
-        cur.execute(stmt, args)
-        user = cur.fetchone()
-        if user is None:
-            return None
-        cur.close()
-        return User(user[0], user[1])
+        user_dict = self.collection.document(str(user_id)).get()
+        return None if not user_dict.exists else User(user_id, user_dict.get('active'))
 
     def set_active(self, user_id: str, active: bool):
-        cur = self.conn.cursor()
-        stmt = """
-            UPDATE Users
-            SET active = %s
-            WHERE id = %s;
-        """
-        args = (active, user_id)
-        cur.execute(stmt, args)
-        cur.close()
+        self.collection.document(str(user_id)).update({'active': active})
 
     def delete_user(self, user_id: str):
-        cur = self.conn.cursor()
-        stmt = """
-            DELETE FROM Users WHERE id = %s;
-        """
-        args = (user_id, )
-        cur.execute(stmt, args)
-        self.conn.commit()
-        cur.close()
+        self.collection.document(str(user_id)).delete()
 
     def list_users(self) -> List[User]:
-        cur = self.conn.cursor()
-        stmt = """
-            SELECT id, active FROM Users;
-        """
-        cur.execute(stmt)
-        users = [User(x[0], x[1]) for x in cur.fetchall()]
-        cur.close()
-        return users
+        users = self.collection.get()
+        return [User(user.id, user.get('active')) for user in users]
