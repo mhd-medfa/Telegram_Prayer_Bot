@@ -45,7 +45,7 @@ def shift_time(time, delta: timedelta):
     return f"{time.hour:02}:{time.minute:02}"
 
 
-url = "https://en.halalguide.me/innopolis/namaz-time"
+url = "https://en.halalguide.me/odincovo/namaz-time"
 res = requests.get(url, verify=False)
 html = res.content
 soup = BeautifulSoup(html, 'html.parser')
