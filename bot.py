@@ -198,7 +198,7 @@ def start(update: Update, context: CallbackContext):
 
 
 def broadcast(update: Update, context: CallbackContext):
-    if update.effective_chat.id == 782144399:
+    if update.effective_chat.id == 619657404:
         users = db.list_users()
         for user in users:
             # logging.info(f"Sending {' '.join(context.args)} to user {user.id}")
