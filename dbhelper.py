@@ -19,7 +19,7 @@ class User:
 class DBHelper:
     def __init__(self):
         cred = credentials.Certificate(settings.CREDENTIALS_FILE)
-        app = firebase_admin.initialize_app(cred, {'databaseURL': settings.DATABASE_URL})
+        app = firebase_admin.initialize_app(cred)
         db = firestore.client(app)
         self.collection = db.collection("users")
 
