@@ -156,7 +156,7 @@ def send_next_prayer(update: Update, context: CallbackContext):
     if requested_prayer is None:
         prayer_time = next((p_time for p_time in prayer_times if p_time > now), None)
         if prayer_time is not None:
-            requested_prayer = prayer_names[prayer_times.index(prayer_time) % len(prayer_times)]
+            requested_prayer = prayer_names[prayer_times.index(prayer_time) % len(prayer_names)]
     else:
         prayer_idx = prayer_names.index(requested_prayer)
         if prayer_idx + 1 < len(prayer_times):
