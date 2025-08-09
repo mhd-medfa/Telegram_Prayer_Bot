@@ -3,7 +3,6 @@ reference:
  https://medium.com/@liuhh02
 """
 import logging
-import os
 from calendar import monthrange
 from datetime import datetime, time, timedelta, timezone
 
@@ -37,9 +36,9 @@ j = updater.job_queue
 moscow = timezone(timedelta(hours=3))
 
 
-def shift_time(time, delta: timedelta):
+def shift_time(time_str, delta: timedelta):
     """Manually advance or delay time by delta"""
-    parts = time.split(':')
+    parts = time_str.split(':')
     hour = int(parts[0])
     minute = int(parts[1])
     time = datetime(2000, 1, 1, hour, minute)
@@ -48,23 +47,83 @@ def shift_time(time, delta: timedelta):
     return f"{time.hour:02}:{time.minute:02}"
 
 
-url = "https://umma.ru/raspisanie-namaza/moscow"
-res = requests.get(url, verify=False)
-html = res.content
-soup = BeautifulSoup(html, 'html.parser')
-table = soup.find('table')
+# Cache for prayer times with month/year tracking
+_prayer_cache = {
+    'data': None,
+    'month': None,
+    'year': None,
+    'last_fetched': None
+}
 
-prayers = []
-for row in table.find_all("tr")[1:]:
-    tmp = [tr.get_text() for tr in row.find_all("td")][2:8]
-    tmp[0] = shift_time(tmp[0], timedelta(minutes=-2))  # earlier fajr
-    tmp[4] = shift_time(tmp[4], timedelta(minutes=2))  # later maghrib
-    prayers.append(tmp)
+# Type hints would be: Dict[str, Union[List[List[str]], int, datetime, None]]
 
-
-def get_month_times() -> list[list[str]]:
-    """Fetches the table of prayer times for the current month from halalguide website"""
-    return np.array(prayers).T.tolist()
+def get_month_times():
+    """Fetches the table of prayer times for the current month from umma.ru website"""
+    now = datetime.now(moscow)
+    current_month = now.month
+    current_year = now.year
+    
+    # Check if we need to fetch new data
+    if (_prayer_cache['data'] is None or 
+        _prayer_cache['month'] != current_month or 
+        _prayer_cache['year'] != current_year):
+        
+        logger.info(f"Fetching fresh prayer times for {current_year}-{current_month:02d}")
+        
+        try:
+            url = "https://umma.ru/raspisanie-namaza/moscow"
+            res = requests.get(url, verify=False, timeout=30)
+            res.raise_for_status()  # Raise an exception for bad status codes
+            
+            html = res.content
+            soup = BeautifulSoup(html, 'html.parser')
+            table = soup.find('table')
+            
+            if table is None:
+                raise Exception("No prayer time table found on the website")
+            
+            prayers = []
+            rows_processed = 0
+            
+            for row in table.find_all("tr")[1:]:  # Skip header row
+                cells = row.find_all("td")
+                if len(cells) < 8:  # Ensure we have enough columns
+                    continue
+                    
+                tmp = [tr.get_text().strip() for tr in cells][2:8]  # Extract prayer times
+                
+                if len(tmp) != 6:  # Ensure we have exactly 6 prayer times
+                    continue
+                
+                # Apply time adjustments
+                tmp[0] = shift_time(tmp[0], timedelta(minutes=-2))  # earlier fajr
+                tmp[4] = shift_time(tmp[4], timedelta(minutes=2))  # later maghrib
+                prayers.append(tmp)
+                rows_processed += 1
+            
+            if rows_processed == 0:
+                raise Exception("No valid prayer time rows found")
+            
+            # Update cache
+            _prayer_cache['data'] = np.array(prayers).T.tolist()
+            _prayer_cache['month'] = current_month
+            _prayer_cache['year'] = current_year  
+            _prayer_cache['last_fetched'] = now
+            
+            logger.info(f"Successfully cached {rows_processed} days of prayer times for {current_year}-{current_month:02d}")
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch prayer times: {e}")
+            
+            # If we have cached data from previous month, use it as fallback
+            if _prayer_cache['data'] is not None:
+                logger.warning(f"Using cached prayer times from {_prayer_cache['year']}-{_prayer_cache['month']:02d} as fallback")
+                return _prayer_cache['data']
+            else:
+                logger.error("No cached data available, bot functions may fail")
+                raise Exception(f"Unable to fetch prayer times and no cache available: {e}")
+    
+    return _prayer_cache['data']
 
 
 def remind_next_prayer(context: CallbackContext):
