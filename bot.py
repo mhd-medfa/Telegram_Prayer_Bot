@@ -55,7 +55,27 @@ _prayer_cache = {
     'last_fetched': None
 }
 
+# Job tracking for each user to prevent duplicate notifications
+_user_jobs = {}
+
 # Type hints would be: Dict[str, Union[List[List[str]], int, datetime, None]]
+
+
+def cancel_user_jobs(user_id):
+    """Cancel all existing jobs for a specific user"""
+    user_id = str(user_id)
+    if user_id in _user_jobs:
+        jobs_list = _user_jobs[user_id]
+        for job in jobs_list[:]:  # Create a copy to iterate over
+            try:
+                job.schedule_removal()
+                jobs_list.remove(job)
+                logging.info(f'Cancelled job for user {user_id}')
+            except Exception as e:
+                logging.warning(f'Failed to cancel job for user {user_id}: {e}')
+        # Clean up empty lists
+        if not jobs_list:
+            del _user_jobs[user_id]
 
 def get_month_times():
     """Fetches the table of prayer times for the current month from umma.ru website"""
@@ -147,6 +167,11 @@ def register_todays_prayers(context: CallbackContext):
     if not user.active:
         return
     logging.info(f'Registering today\'s prayers for {uid}')
+    
+    # Initialize job tracking for this user if not exists
+    if str(uid) not in _user_jobs:
+        _user_jobs[str(uid)] = []
+    
     prayer_times = get_month_times()
     today = datetime.now(moscow).day - 1
     for name, prayer_time in zip(prayer_names, prayer_times):
@@ -156,10 +181,13 @@ def register_todays_prayers(context: CallbackContext):
         # Don't register past prayers
         if timestamp < datetime.now(moscow).time().replace(tzinfo=moscow):
             continue
-        j.run_once(remind_next_prayer, timestamp, context={
+        job = j.run_once(remind_next_prayer, timestamp, context={
             'chat_id': uid,
             'prayer_name': name,
         })
+        
+        # Store the job reference for later cancellation
+        _user_jobs[str(uid)].append(job)
 
         logging.info(f'Registered callback for {name} for {uid} registered at {timestamp}')
 
@@ -241,6 +269,10 @@ def start(update: Update, context: CallbackContext):
     new_id = update.effective_chat.id
     context.chat_data['id'] = new_id
     user = db.get_user(new_id)
+    
+    # Cancel any existing jobs for this user to prevent duplicates
+    cancel_user_jobs(new_id)
+    
     if user is None:
         user = db.add_user(new_id)
     elif user.active:
@@ -250,9 +282,16 @@ def start(update: Update, context: CallbackContext):
     elif not user.active:
         db.set_active(new_id, True)
 
+    # Initialize job tracking for this user
+    if str(new_id) not in _user_jobs:
+        _user_jobs[str(new_id)] = []
+
     job = j.run_daily(register_todays_prayers, time(0, 0, tzinfo=moscow), context={
         'chat_id': new_id,
     })
+    # Store the daily job reference
+    _user_jobs[str(new_id)].append(job)
+    
     job.run(dispatcher)  # Run just once (for today)
     context.bot.send_message(chat_id=new_id,
                              text="I will send you a reminder everyday on the prayer times of that day.\n"
@@ -273,7 +312,10 @@ def broadcast(update: Update, context: CallbackContext):
 def stop(update: Update, context: CallbackContext):
     uid = update.effective_chat.id
     db.set_active(uid, False)
-
+    
+    # Cancel all scheduled jobs for this user
+    cancel_user_jobs(uid)
+    
     context.bot.send_message(chat_id=uid,
                              text="Reminders stopped. To reactivate, send /start again.")
 
@@ -300,10 +342,15 @@ logger.info("Bot configured.")
 
 users = db.list_users()
 for user in users:
+    # Initialize job tracking for existing users
+    if str(user.id) not in _user_jobs:
+        _user_jobs[str(user.id)] = []
+    
     job = j.run_daily(register_todays_prayers, time(0, 0, tzinfo=moscow), context={
         'chat_id': user.id,
     })
+    # Store the daily job reference
+    _user_jobs[str(user.id)].append(job)
     job.run(dispatcher)  # Run just once (for today)
-    updater.start_polling()
 
 updater.start_polling()
