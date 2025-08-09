@@ -2,20 +2,20 @@
 reference:
  https://medium.com/@liuhh02
 """
-import os
 import logging
-from datetime import datetime, time, timedelta, timezone
+import os
 from calendar import monthrange
+from datetime import datetime, time, timedelta, timezone
 
-from telegram import Update, ParseMode
-from telegram.ext import Updater, CommandHandler, CallbackContext
+import numpy as np
 import requests
 from bs4 import BeautifulSoup
-import numpy as np
 from humanize import precisedelta
+from telegram import ParseMode, Update
+from telegram.ext import CallbackContext, CommandHandler, Updater
 
-from dbhelper import DBHelper
 from config import settings
+from dbhelper import DBHelper
 
 prayer_names = ['Fajr', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha']
 
@@ -39,13 +39,16 @@ moscow = timezone(timedelta(hours=3))
 
 def shift_time(time, delta: timedelta):
     """Manually advance or delay time by delta"""
-    time = datetime(2000, 1, 1, int(time[:2]), int(time[3:]))
+    parts = time.split(':')
+    hour = int(parts[0])
+    minute = int(parts[1])
+    time = datetime(2000, 1, 1, hour, minute)
     time += delta
     time = time.time()
     return f"{time.hour:02}:{time.minute:02}"
 
 
-url = "https://en.halalguide.me/odincovo/namaz-time"
+url = "https://umma.ru/raspisanie-namaza/moscow"
 res = requests.get(url, verify=False)
 html = res.content
 soup = BeautifulSoup(html, 'html.parser')
@@ -53,7 +56,7 @@ table = soup.find('table')
 
 prayers = []
 for row in table.find_all("tr")[1:]:
-    tmp = [tr.get_text() for tr in row.find_all("td")][3:]
+    tmp = [tr.get_text() for tr in row.find_all("td")][2:8]
     tmp[0] = shift_time(tmp[0], timedelta(minutes=-2))  # earlier fajr
     tmp[4] = shift_time(tmp[4], timedelta(minutes=2))  # later maghrib
     prayers.append(tmp)
